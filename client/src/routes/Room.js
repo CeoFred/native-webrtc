@@ -147,8 +147,6 @@ const Room = (props) => {
                     document
                         .getElementById('remote-streams-container')
                         .appendChild(videoDivContainer)
-        // console.log('received media for ',userID,e);
-        // partnerVideo.current.srcObject = e.streams[0];
     };
 
     return (
