@@ -8,16 +8,17 @@ const io = socket(server);
 const rooms = {};
 
 io.on("connection", socket => {
-    socket.on("join room", roomID => {
+    socket.on("join_room", roomID => {
+        socket.room = roomID;
         if (rooms[roomID]) {
             rooms[roomID].push(socket.id);
         } else {
             rooms[roomID] = [socket.id];
         }
-        const otherUser = rooms[roomID].find(id => id !== socket.id);
-        if (otherUser) {
-            socket.emit("other user", otherUser);
-            socket.to(otherUser).emit("user joined", socket.id);
+        const otherUsers = rooms[roomID].filter(id => id !== socket.id);
+        if (otherUsers) {
+            socket.emit("other_users", otherUsers);
+            socket.broadcast.emit('user_joined', socket.id);
         }
     });
 
@@ -30,7 +31,13 @@ io.on("connection", socket => {
     });
 
     socket.on("ice-candidate", incoming => {
-        io.to(incoming.target).emit("ice-candidate", incoming.candidate);
+        io.to(incoming.target).emit("ice-candidate", incoming);
+    });
+
+    socket.on("disconnect",() => {
+        if(rooms[socket.room]){
+            rooms[socket.room] = rooms[socket.room].filter(user => user !== socket.id)
+        }
     });
 });
 

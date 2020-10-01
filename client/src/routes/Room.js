@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect,useState   } from "react";
 import io from "socket.io-client";
 
 const Room = (props) => {
@@ -6,24 +6,31 @@ const Room = (props) => {
     const partnerVideo = useRef();
     const peerRef = useRef();
     const socketRef = useRef();
-    const otherUser = useRef();
+    const otherUsers = useRef([]);
     const userStream = useRef();
+    const peersRef = useRef({});
+    const [peerStreams,setPeerStreams] = useState({});
 
     useEffect(() => {
-        navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then(stream => {
+        navigator.mediaDevices.getUserMedia({ audio: false, video: true }).then(stream => {
             userVideo.current.srcObject = stream;
             userStream.current = stream;
 
             socketRef.current = io.connect("/");
-            socketRef.current.emit("join room", props.match.params.roomID);
+            socketRef.current.emit("join_room", props.match.params.roomID);
 
-            socketRef.current.on('other user', userID => {
-                callUser(userID);
-                otherUser.current = userID;
+            socketRef.current.on('other_users', users => {
+                otherUsers.current = users;
+                console.log('Other users in class ', users)
+                users.forEach(userID => {
+                    callUser(userID);
+                });
             });
 
-            socketRef.current.on("user joined", userID => {
-                otherUser.current = userID;
+            socketRef.current.on("user_joined", userID => {
+                console.log('New User Joined ', userID);
+                const userIsInList = otherUsers.current.find(user => user === userID);
+                if(!userIsInList) otherUsers.current.push(userID);
             });
 
             socketRef.current.on("offer", handleRecieveCall);
@@ -36,12 +43,13 @@ const Room = (props) => {
     }, []);
 
     function callUser(userID) {
-        peerRef.current = createPeer(userID);
-        userStream.current.getTracks().forEach(track => peerRef.current.addTrack(track, userStream.current));
+        const peer  = createPeer(userID);
+        userStream.current.getTracks().forEach(track => peer.addTrack(track, userStream.current));
+        // console.log(peersRef.current);
     }
 
     function createPeer(userID) {
-        const peer = new RTCPeerConnection({
+        const peer = new RTCPeerConnection({ 
             iceServers: [
                 {
                     urls: "stun:stun.stunprotocol.org"
@@ -54,75 +62,102 @@ const Room = (props) => {
             ]
         });
 
-        peer.onicecandidate = handleICECandidateEvent;
-        peer.ontrack = handleTrackEvent;
+        peer.onicecandidate = (e) => handleICECandidateEvent(e,userID);
+        peer.ontrack = (e) => handleTrackEvent(e,userID);
         peer.onnegotiationneeded = () => handleNegotiationNeededEvent(userID);
-
+        peersRef.current[userID] = peer;
         return peer;
     }
 
     function handleNegotiationNeededEvent(userID) {
-        peerRef.current.createOffer().then(offer => {
-            return peerRef.current.setLocalDescription(offer);
+        peersRef.current[userID].createOffer().then(offer => {
+            return peersRef.current[userID].setLocalDescription(offer);
         }).then(() => {
             const payload = {
                 target: userID,
                 caller: socketRef.current.id,
-                sdp: peerRef.current.localDescription
+                sdp: peersRef.current[userID].localDescription
             };
             socketRef.current.emit("offer", payload);
         }).catch(e => console.log(e));
     }
 
     function handleRecieveCall(incoming) {
-        peerRef.current = createPeer();
+
+        const newpeer = createPeer(incoming.caller);
         const desc = new RTCSessionDescription(incoming.sdp);
-        peerRef.current.setRemoteDescription(desc).then(() => {
-            userStream.current.getTracks().forEach(track => peerRef.current.addTrack(track, userStream.current));
+        newpeer.setRemoteDescription(desc).then(() => {
+            userStream.current.getTracks().forEach(track => newpeer.addTrack(track, userStream.current));
         }).then(() => {
-            return peerRef.current.createAnswer();
+            return newpeer.createAnswer();
         }).then(answer => {
-            return peerRef.current.setLocalDescription(answer);
+            return newpeer.setLocalDescription(answer);
         }).then(() => {
             const payload = {
                 target: incoming.caller,
                 caller: socketRef.current.id,
-                sdp: peerRef.current.localDescription
+                sdp: newpeer.localDescription
             }
+            // console.log('answer ready ', payload);
             socketRef.current.emit("answer", payload);
         })
     }
 
     function handleAnswer(message) {
         const desc = new RTCSessionDescription(message.sdp);
-        peerRef.current.setRemoteDescription(desc).catch(e => console.log(e));
+        peersRef.current[message.caller].setRemoteDescription(desc).catch(e => console.log(e));
     }
 
-    function handleICECandidateEvent(e) {
+    function handleICECandidateEvent(e,userID) {
         if (e.candidate) {
+            // console.log('ice candidate updates');
             const payload = {
-                target: otherUser.current,
+                target: userID,
                 candidate: e.candidate,
+                sender: socketRef.current.id
             }
             socketRef.current.emit("ice-candidate", payload);
         }
     }
 
     function handleNewICECandidateMsg(incoming) {
-        const candidate = new RTCIceCandidate(incoming);
-
-        peerRef.current.addIceCandidate(candidate)
+        const candidate = new RTCIceCandidate(incoming.candidate);
+        console.log(peersRef.current);
+        peersRef.current[incoming.sender].addIceCandidate(candidate)
             .catch(e => console.log(e));
     }
 
-    function handleTrackEvent(e) {
-        partnerVideo.current.srcObject = e.streams[0];
+    function handleTrackEvent(e,userID) {
+        setPeerStreams(s => {
+            return {...s,[userID]: e.streams[0]}
+        })
+                   var videoDivContainer = document.createElement('div')
+
+                    videoDivContainer.id = userID
+                    var videoLabel = document.createElement('div')
+                    videoLabel.classList.add('video-label')
+                    videoLabel.innerText = `@${ userID}`
+                    var videlem = document.createElement('video')
+                    videlem.srcObject = e.streams[0];
+                    videlem.autoplay = true
+                    videlem.id = userID
+                    videlem.playsInline = true
+                    videoDivContainer.appendChild(videlem)
+                    videoDivContainer.appendChild(videoLabel)
+                    document
+                        .getElementById('remote-streams-container')
+                        .appendChild(videoDivContainer)
+        // console.log('received media for ',userID,e);
+        // partnerVideo.current.srcObject = e.streams[0];
     };
 
     return (
         <div>
             <video autoPlay ref={userVideo} />
-            <video autoPlay ref={partnerVideo} />
+            <div id="remote-streams-container">
+
+            </div>
+
         </div>
     );
 };
